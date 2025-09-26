@@ -80,7 +80,7 @@
       governance-score: u0,
       social-score: u0,
       total-score: u100,
-      last-updated: block-height,
+      last-updated: stacks-block-height,
       verified: false,
       trust-level: u1,
       reputation-locked: false
@@ -96,7 +96,7 @@
       governance-score: u0,
       social-score: u0,
       total-score: u100,
-      last-updated: block-height,
+      last-updated: stacks-block-height,
       verified: false,
       trust-level: u1,
       reputation-locked: false
@@ -109,7 +109,7 @@
     (ok (map-set user-reputation user
       (merge reputation {
         reputation-locked: true,
-        last-updated: (+ block-height duration-blocks)
+        last-updated: (+ stacks-block-height duration-blocks)
       })))))
 
 (define-public (unlock-reputation (user principal))
@@ -128,7 +128,7 @@
   (transaction-hash (buff 32)))
   (let ((caller tx-sender)
         (activity-id (default-to u0 (map-get? user-activity-counter caller)))
-        (score-increase (min (/ amount u1000) u50))
+        (score-increase (if (<= (/ amount u1000) u50) (/ amount u1000) u50))
         (reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
     (asserts! (not (get reputation-locked reputation)) err-unauthorized)
     
@@ -143,7 +143,7 @@
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (try! (update-user-score caller "payment" score-increase))
+    (update-user-score caller "payment" score-increase)
     (ok true)))
 
 (define-public (record-governance-participation 
@@ -151,7 +151,7 @@
   (vote-weight uint))
   (let ((caller tx-sender)
         (activity-id (default-to u0 (map-get? user-activity-counter caller)))
-        (score-increase (min (/ vote-weight u100) u25))
+        (score-increase (if (<= (/ vote-weight u100) u25) (/ vote-weight u100) u25))
         (reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
     (asserts! (not (get reputation-locked reputation)) err-unauthorized)
     
@@ -166,7 +166,7 @@
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (try! (update-user-score caller "governance" score-increase))
+    (update-user-score caller "governance" score-increase)
     (ok true)))
 
 (define-public (record-social-activity
@@ -190,7 +190,7 @@
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (try! (update-user-score caller "social" score-impact))
+    (update-user-score caller "social" score-impact)
     (ok true)))
 
 (define-public (verify-external-action 
@@ -211,7 +211,7 @@
         verifier: caller
       })
     
-    (try! (update-user-score user "social" score-impact))
+    (update-user-score user "social" score-impact)
     (ok true)))
 
 (define-public (penalize-user (user principal) (penalty-points uint) (reason (string-ascii 128)))
@@ -245,37 +245,42 @@
   (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found)))
     (if (is-eq score-type "payment")
       (let ((new-payment-score (+ (get payment-score reputation) points)))
-        (map-set user-reputation user
-          (merge reputation {
-            payment-score: new-payment-score,
-            total-score: (+ (+ (get base-score reputation) new-payment-score) 
-                           (+ (get governance-score reputation) (get social-score reputation))),
-            last-updated: block-height,
-            trust-level: (calculate-trust-level (+ (+ (get base-score reputation) new-payment-score) 
-                                                  (+ (get governance-score reputation) (get social-score reputation))))
-          })))
+        (begin
+          (map-set user-reputation user
+            (merge reputation {
+              payment-score: new-payment-score,
+              total-score: (+ (+ (get base-score reputation) new-payment-score) 
+                             (+ (get governance-score reputation) (get social-score reputation))),
+              last-updated: block-height,
+              trust-level: (calculate-trust-level (+ (+ (get base-score reputation) new-payment-score) 
+                                                    (+ (get governance-score reputation) (get social-score reputation))))
+            }))
+          true))
       (if (is-eq score-type "governance")
         (let ((new-governance-score (+ (get governance-score reputation) points)))
-          (map-set user-reputation user
-            (merge reputation {
-              governance-score: new-governance-score,
-              total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
-                             (+ new-governance-score (get social-score reputation))),
-              last-updated: block-height,
-              trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
-                                                    (+ new-governance-score (get social-score reputation))))
-            })))
+          (begin
+            (map-set user-reputation user
+              (merge reputation {
+                governance-score: new-governance-score,
+                total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
+                               (+ new-governance-score (get social-score reputation))),
+                last-updated: block-height,
+                trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
+                                                      (+ new-governance-score (get social-score reputation))))
+              }))
+            true))
         (let ((new-social-score (+ (get social-score reputation) points)))
-          (map-set user-reputation user
-            (merge reputation {
-              social-score: new-social-score,
-              total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
-                             (+ (get governance-score reputation) new-social-score)),
-              last-updated: block-height,
-              trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
-                                                    (+ (get governance-score reputation) new-social-score)))
-            }))))))
-  (ok true))
+          (begin
+            (map-set user-reputation user
+              (merge reputation {
+                social-score: new-social-score,
+                total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
+                               (+ (get governance-score reputation) new-social-score)),
+                last-updated: block-height,
+                trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
+                                                      (+ (get governance-score reputation) new-social-score)))
+              }))
+            true))))))
 
 (define-public (delegate-reputation 
   (delegate principal)
@@ -284,7 +289,7 @@
   (let ((caller tx-sender)
         (caller-reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
     (asserts! (>= (get total-score caller-reputation) score-amount) err-insufficient-balance)
-    (asserts! (<= duration-blocks u144000) err-invalid-timeframe) ; Max 100 days
+    (asserts! (<= duration-blocks u144000) err-invalid-timeframe) ;; Max 100 days
     
     (map-set reputation-delegates
       {delegator: caller, delegate: delegate}
@@ -338,7 +343,7 @@
           requirements-met: requirements
         })
       
-      (try! (update-user-score user "social" badge-score))
+      (update-user-score user "social" badge-score)
       (ok true))))
 
 (define-public (upgrade-badge
@@ -360,7 +365,7 @@
           badge-score: (* new-level u25)
         }))
       
-      (try! (update-user-score user "social" score-increase))
+      (update-user-score user "social" score-increase)
       (ok true))))
 
 (define-public (verify-user-identity (user principal))
@@ -439,7 +444,7 @@
     (match reputation
       rep-data
       (let ((blocks-since-update (- block-height (get last-updated rep-data)))
-            (decay-rate (if (> blocks-since-update u14400) u5 u0))) ; 10 days threshold
+            (decay-rate (if (> blocks-since-update u14400) u5 u0))) ;; 10 days threshold
         (if (> (get total-score rep-data) decay-rate)
           (- (get total-score rep-data) decay-rate)
           u0))

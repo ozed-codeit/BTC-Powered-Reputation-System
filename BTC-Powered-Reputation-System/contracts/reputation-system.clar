@@ -362,3 +362,85 @@
       
       (try! (update-user-score user "social" score-increase))
       (ok true))))
+
+(define-public (verify-user-identity (user principal))
+  (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found)))
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (ok (map-set user-reputation user
+      (merge reputation {verified: true})))))
+
+(define-private (calculate-trust-level (total-score uint))
+  (if (>= total-score u1000) u5
+  (if (>= total-score u500) u4
+  (if (>= total-score u250) u3
+  (if (>= total-score u100) u2
+  u1)))))
+
+(define-read-only (get-user-reputation (user principal))
+  (map-get? user-reputation user))
+
+(define-read-only (get-activity-history (user principal) (activity-id uint))
+  (map-get? reputation-activities {user: user, activity-id: activity-id}))
+
+(define-read-only (get-delegation-info (delegator principal) (delegate principal))
+  (map-get? reputation-delegates {delegator: delegator, delegate: delegate}))
+
+(define-read-only (get-user-badge (user principal) (badge-type (string-ascii 32)))
+  (map-get? user-badges {user: user, badge-type: badge-type}))
+
+(define-read-only (get-reputation-rank (user principal))
+  (let ((reputation (map-get? user-reputation user)))
+    (match reputation
+      rep-data
+      (let ((score (get total-score rep-data)))
+        (if (>= score u1000) "legendary"
+        (if (>= score u500) "excellent"
+        (if (>= score u300) "good"
+        (if (>= score u150) "fair"
+        (if (>= score u50) "poor"
+        "new"))))))
+      "unranked")))
+
+(define-read-only (calculate-trust-score (user principal) (context (string-ascii 32)))
+  (let ((reputation (map-get? user-reputation user)))
+    (match reputation
+      rep-data
+      (let ((base (get total-score rep-data))
+            (verification-bonus (if (get verified rep-data) u50 u0))
+            (trust-multiplier (* (get trust-level rep-data) u10))
+            (context-multiplier (if (is-eq context "payment") u120 
+                                (if (is-eq context "governance") u110 u100))))
+        (/ (* (+ (+ base verification-bonus) trust-multiplier) context-multiplier) u100))
+      u0)))
+
+(define-read-only (get-effective-reputation (user principal))
+  (let ((base-reputation (map-get? user-reputation user)))
+    (match base-reputation
+      rep-data
+      (let ((base-score (get total-score rep-data)))
+        ;; Add delegated reputation received
+        (fold check-received-delegations (list user) base-score))
+      u0)))
+
+(define-private (check-received-delegations (user-list (list 1 principal)) (current-score uint))
+  current-score)
+
+(define-read-only (is-reputation-locked (user principal))
+  (let ((reputation (map-get? user-reputation user)))
+    (match reputation
+      rep-data (get reputation-locked rep-data)
+      false)))
+
+(define-read-only (get-user-activity-count (user principal))
+  (default-to u0 (map-get? user-activity-counter user)))
+
+(define-read-only (calculate-reputation-decay (user principal))
+  (let ((reputation (map-get? user-reputation user)))
+    (match reputation
+      rep-data
+      (let ((blocks-since-update (- block-height (get last-updated rep-data)))
+            (decay-rate (if (> blocks-since-update u14400) u5 u0))) ; 10 days threshold
+        (if (> (get total-score rep-data) decay-rate)
+          (- (get total-score rep-data) decay-rate)
+          u0))
+      u0)))

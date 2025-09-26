@@ -121,3 +121,158 @@
         reputation-locked: false,
         last-updated: block-height
       })))))
+
+(define-public (record-payment-activity 
+  (counterparty principal)
+  (amount uint)
+  (transaction-hash (buff 32)))
+  (let ((caller tx-sender)
+        (activity-id (default-to u0 (map-get? user-activity-counter caller)))
+        (score-increase (min (/ amount u1000) u50))
+        (reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
+    (asserts! (not (get reputation-locked reputation)) err-unauthorized)
+    
+    (map-set reputation-activities 
+      {user: caller, activity-id: (+ activity-id u1)}
+      {
+        activity-type: "payment",
+        score-change: (to-int score-increase),
+        timestamp: block-height,
+        verifier: counterparty,
+        description: "Payment transaction completed"
+      })
+    
+    (map-set user-activity-counter caller (+ activity-id u1))
+    (try! (update-user-score caller "payment" score-increase))
+    (ok true)))
+
+(define-public (record-governance-participation 
+  (proposal-id uint)
+  (vote-weight uint))
+  (let ((caller tx-sender)
+        (activity-id (default-to u0 (map-get? user-activity-counter caller)))
+        (score-increase (min (/ vote-weight u100) u25))
+        (reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
+    (asserts! (not (get reputation-locked reputation)) err-unauthorized)
+    
+    (map-set reputation-activities 
+      {user: caller, activity-id: (+ activity-id u1)}
+      {
+        activity-type: "governance",
+        score-change: (to-int score-increase),
+        timestamp: block-height,
+        verifier: contract-owner,
+        description: "Participated in governance vote"
+      })
+    
+    (map-set user-activity-counter caller (+ activity-id u1))
+    (try! (update-user-score caller "governance" score-increase))
+    (ok true)))
+
+(define-public (record-social-activity
+  (activity-type (string-ascii 32))
+  (description (string-ascii 128))
+  (score-impact uint))
+  (let ((caller tx-sender)
+        (activity-id (default-to u0 (map-get? user-activity-counter caller)))
+        (reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
+    (asserts! (not (get reputation-locked reputation)) err-unauthorized)
+    (asserts! (<= score-impact u30) err-invalid-score)
+    
+    (map-set reputation-activities 
+      {user: caller, activity-id: (+ activity-id u1)}
+      {
+        activity-type: activity-type,
+        score-change: (to-int score-impact),
+        timestamp: block-height,
+        verifier: caller,
+        description: description
+      })
+    
+    (map-set user-activity-counter caller (+ activity-id u1))
+    (try! (update-user-score caller "social" score-impact))
+    (ok true)))
+
+(define-public (verify-external-action 
+  (user principal)
+  (action-hash (buff 32))
+  (action-type (string-ascii 32))
+  (score-impact uint))
+  (let ((caller tx-sender))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (asserts! (<= score-impact u100) err-invalid-score)
+    
+    (map-set verified-actions 
+      {user: user, action-hash: action-hash}
+      {
+        action-type: action-type,
+        score-impact: score-impact,
+        verified-at: block-height,
+        verifier: caller
+      })
+    
+    (try! (update-user-score user "social" score-impact))
+    (ok true)))
+
+(define-public (penalize-user (user principal) (penalty-points uint) (reason (string-ascii 128)))
+  (let ((caller tx-sender)
+        (activity-id (default-to u0 (map-get? user-activity-counter user))))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (asserts! (<= penalty-points u200) err-invalid-score)
+    
+    (map-set reputation-activities 
+      {user: user, activity-id: (+ activity-id u1)}
+      {
+        activity-type: "penalty",
+        score-change: (to-int (- u0 penalty-points)),
+        timestamp: block-height,
+        verifier: caller,
+        description: reason
+      })
+    
+    (map-set user-activity-counter user (+ activity-id u1))
+    (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found))
+          (new-total (if (> (get total-score reputation) penalty-points)
+                       (- (get total-score reputation) penalty-points)
+                       u0)))
+      (ok (map-set user-reputation user
+        (merge reputation {
+          total-score: new-total,
+          last-updated: block-height
+        }))))))
+
+(define-private (update-user-score (user principal) (score-type (string-ascii 32)) (points uint))
+  (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found)))
+    (if (is-eq score-type "payment")
+      (let ((new-payment-score (+ (get payment-score reputation) points)))
+        (map-set user-reputation user
+          (merge reputation {
+            payment-score: new-payment-score,
+            total-score: (+ (+ (get base-score reputation) new-payment-score) 
+                           (+ (get governance-score reputation) (get social-score reputation))),
+            last-updated: block-height,
+            trust-level: (calculate-trust-level (+ (+ (get base-score reputation) new-payment-score) 
+                                                  (+ (get governance-score reputation) (get social-score reputation))))
+          })))
+      (if (is-eq score-type "governance")
+        (let ((new-governance-score (+ (get governance-score reputation) points)))
+          (map-set user-reputation user
+            (merge reputation {
+              governance-score: new-governance-score,
+              total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
+                             (+ new-governance-score (get social-score reputation))),
+              last-updated: block-height,
+              trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
+                                                    (+ new-governance-score (get social-score reputation))))
+            })))
+        (let ((new-social-score (+ (get social-score reputation) points)))
+          (map-set user-reputation user
+            (merge reputation {
+              social-score: new-social-score,
+              total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
+                             (+ (get governance-score reputation) new-social-score)),
+              last-updated: block-height,
+              trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
+                                                    (+ (get governance-score reputation) new-social-score)))
+            }))))))
+  (ok true))

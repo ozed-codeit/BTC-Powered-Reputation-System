@@ -1,30 +1,72 @@
+;; BTC-Powered Reputation System
+;; On-chain reputation scoring based on verifiable activities
 
-;; title: reputation-system
-;; version:
-;; summary:
-;; description:
+(define-constant contract-owner tx-sender)
+(define-constant err-owner-only (err u100))
+(define-constant err-not-found (err u101))
+(define-constant err-unauthorized (err u102))
+(define-constant err-invalid-score (err u103))
+(define-constant err-already-exists (err u104))
+(define-constant err-insufficient-balance (err u105))
+(define-constant err-invalid-timeframe (err u106))
+(define-constant err-max-delegates-reached (err u107))
+(define-constant err-invalid-badge-level (err u108))
 
-;; traits
-;;
+(define-map user-reputation
+  principal
+  {
+    base-score: uint,
+    payment-score: uint,
+    governance-score: uint,
+    social-score: uint,
+    total-score: uint,
+    last-updated: uint,
+    verified: bool,
+    trust-level: uint,
+    reputation-locked: bool
+  })
 
-;; token definitions
-;;
+(define-map reputation-activities
+  { user: principal, activity-id: uint }
+  {
+    activity-type: (string-ascii 32),
+    score-change: int,
+    timestamp: uint,
+    verifier: principal,
+    description: (string-ascii 128)
+  })
 
-;; constants
-;;
+(define-map user-activity-counter
+  principal
+  uint)
 
-;; data vars
-;;
+(define-map score-weights
+  (string-ascii 32)
+  uint)
 
-;; data maps
-;;
+(define-map verified-actions
+  { user: principal, action-hash: (buff 32) }
+  {
+    action-type: (string-ascii 32),
+    score-impact: uint,
+    verified-at: uint,
+    verifier: principal
+  })
 
-;; public functions
-;;
+(define-map reputation-delegates
+  { delegator: principal, delegate: principal }
+  {
+    delegated-score: uint,
+    delegation-start: uint,
+    delegation-end: uint,
+    active: bool
+  })
 
-;; read only functions
-;;
-
-;; private functions
-;;
-
+(define-map user-badges
+  { user: principal, badge-type: (string-ascii 32) }
+  {
+    badge-level: uint,
+    earned-at: uint,
+    badge-score: uint,
+    requirements-met: (list 5 (string-ascii 64))
+  })

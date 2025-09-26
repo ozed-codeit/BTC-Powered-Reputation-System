@@ -119,7 +119,7 @@
     (ok (map-set user-reputation user
       (merge reputation {
         reputation-locked: false,
-        last-updated: block-height
+        last-updated: stacks-block-height
       })))))
 
 (define-public (record-payment-activity 
@@ -137,14 +137,15 @@
       {
         activity-type: "payment",
         score-change: (to-int score-increase),
-        timestamp: block-height,
+        timestamp: stacks-block-height,
         verifier: counterparty,
         description: "Payment transaction completed"
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (update-user-score caller "payment" score-increase)
-    (ok true)))
+    (begin
+      (update-user-score caller "payment" score-increase)
+      (ok true))))
 
 (define-public (record-governance-participation 
   (proposal-id uint)
@@ -160,14 +161,15 @@
       {
         activity-type: "governance",
         score-change: (to-int score-increase),
-        timestamp: block-height,
+        timestamp: stacks-block-height,
         verifier: contract-owner,
         description: "Participated in governance vote"
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (update-user-score caller "governance" score-increase)
-    (ok true)))
+    (begin
+      (update-user-score caller "governance" score-increase)
+      (ok true))))
 
 (define-public (record-social-activity
   (activity-type (string-ascii 32))
@@ -184,14 +186,15 @@
       {
         activity-type: activity-type,
         score-change: (to-int score-impact),
-        timestamp: block-height,
+        timestamp: stacks-block-height,
         verifier: caller,
         description: description
       })
     
     (map-set user-activity-counter caller (+ activity-id u1))
-    (update-user-score caller "social" score-impact)
-    (ok true)))
+    (begin
+      (update-user-score caller "social" score-impact)
+      (ok true))))
 
 (define-public (verify-external-action 
   (user principal)
@@ -207,12 +210,13 @@
       {
         action-type: action-type,
         score-impact: score-impact,
-        verified-at: block-height,
+        verified-at: stacks-block-height,
         verifier: caller
       })
     
-    (update-user-score user "social" score-impact)
-    (ok true)))
+    (begin
+      (update-user-score user "social" score-impact)
+      (ok true))))
 
 (define-public (penalize-user (user principal) (penalty-points uint) (reason (string-ascii 128)))
   (let ((caller tx-sender)
@@ -225,7 +229,7 @@
       {
         activity-type: "penalty",
         score-change: (to-int (- u0 penalty-points)),
-        timestamp: block-height,
+        timestamp: stacks-block-height,
         verifier: caller,
         description: reason
       })
@@ -238,49 +242,47 @@
       (ok (map-set user-reputation user
         (merge reputation {
           total-score: new-total,
-          last-updated: block-height
+          last-updated: stacks-block-height
         }))))))
 
 (define-private (update-user-score (user principal) (score-type (string-ascii 32)) (points uint))
-  (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found)))
-    (if (is-eq score-type "payment")
-      (let ((new-payment-score (+ (get payment-score reputation) points)))
-        (begin
+  (match (map-get? user-reputation user)
+    reputation
+    (begin
+      (if (is-eq score-type "payment")
+        (let ((new-payment-score (+ (get payment-score reputation) points)))
           (map-set user-reputation user
             (merge reputation {
               payment-score: new-payment-score,
               total-score: (+ (+ (get base-score reputation) new-payment-score) 
                              (+ (get governance-score reputation) (get social-score reputation))),
-              last-updated: block-height,
+              last-updated: stacks-block-height,
               trust-level: (calculate-trust-level (+ (+ (get base-score reputation) new-payment-score) 
                                                     (+ (get governance-score reputation) (get social-score reputation))))
-            }))
-          true))
-      (if (is-eq score-type "governance")
-        (let ((new-governance-score (+ (get governance-score reputation) points)))
-          (begin
+            })))
+        (if (is-eq score-type "governance")
+          (let ((new-governance-score (+ (get governance-score reputation) points)))
             (map-set user-reputation user
               (merge reputation {
                 governance-score: new-governance-score,
                 total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
                                (+ new-governance-score (get social-score reputation))),
-                last-updated: block-height,
+                last-updated: stacks-block-height,
                 trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
                                                       (+ new-governance-score (get social-score reputation))))
-              }))
-            true))
-        (let ((new-social-score (+ (get social-score reputation) points)))
-          (begin
+              })))
+          (let ((new-social-score (+ (get social-score reputation) points)))
             (map-set user-reputation user
               (merge reputation {
                 social-score: new-social-score,
                 total-score: (+ (+ (get base-score reputation) (get payment-score reputation))
                                (+ (get governance-score reputation) new-social-score)),
-                last-updated: block-height,
+                last-updated: stacks-block-height,
                 trust-level: (calculate-trust-level (+ (+ (get base-score reputation) (get payment-score reputation))
                                                       (+ (get governance-score reputation) new-social-score)))
-              }))
-            true))))))
+              })))))
+      true)
+    false))
 
 (define-public (delegate-reputation 
   (delegate principal)
@@ -295,15 +297,15 @@
       {delegator: caller, delegate: delegate}
       {
         delegated-score: score-amount,
-        delegation-start: block-height,
-        delegation-end: (+ block-height duration-blocks),
+        delegation-start: stacks-block-height,
+        delegation-end: (+ stacks-block-height duration-blocks),
         active: true
       })
     
     (map-set user-reputation caller
       (merge caller-reputation {
         total-score: (- (get total-score caller-reputation) score-amount),
-        last-updated: block-height
+        last-updated: stacks-block-height
       }))
     (ok true)))
 
@@ -320,7 +322,7 @@
     (map-set user-reputation caller
       (merge caller-reputation {
         total-score: (+ (get total-score caller-reputation) (get delegated-score delegation)),
-        last-updated: block-height
+        last-updated: stacks-block-height
       }))
     (ok true)))
 
@@ -338,13 +340,14 @@
         {user: user, badge-type: badge-type}
         {
           badge-level: badge-level,
-          earned-at: block-height,
+          earned-at: stacks-block-height,
           badge-score: badge-score,
           requirements-met: requirements
         })
       
-      (update-user-score user "social" badge-score)
-      (ok true))))
+      (begin
+        (update-user-score user "social" badge-score)
+        (ok true)))))
 
 (define-public (upgrade-badge
   (user principal)
@@ -365,8 +368,9 @@
           badge-score: (* new-level u25)
         }))
       
-      (update-user-score user "social" score-increase)
-      (ok true))))
+      (begin
+        (update-user-score user "social" score-increase)
+        (ok true)))))
 
 (define-public (verify-user-identity (user principal))
   (let ((reputation (unwrap! (map-get? user-reputation user) err-not-found)))
@@ -422,13 +426,8 @@
   (let ((base-reputation (map-get? user-reputation user)))
     (match base-reputation
       rep-data
-      (let ((base-score (get total-score rep-data)))
-        ;; Add delegated reputation received
-        (fold check-received-delegations (list user) base-score))
+      (get total-score rep-data)
       u0)))
-
-(define-private (check-received-delegations (user-list (list 1 principal)) (current-score uint))
-  current-score)
 
 (define-read-only (is-reputation-locked (user principal))
   (let ((reputation (map-get? user-reputation user)))
@@ -443,7 +442,7 @@
   (let ((reputation (map-get? user-reputation user)))
     (match reputation
       rep-data
-      (let ((blocks-since-update (- block-height (get last-updated rep-data)))
+      (let ((blocks-since-update (- stacks-block-height (get last-updated rep-data)))
             (decay-rate (if (> blocks-since-update u14400) u5 u0))) ;; 10 days threshold
         (if (> (get total-score rep-data) decay-rate)
           (- (get total-score rep-data) decay-rate)

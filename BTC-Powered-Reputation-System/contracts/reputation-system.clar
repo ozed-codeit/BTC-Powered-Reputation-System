@@ -276,3 +276,89 @@
                                                     (+ (get governance-score reputation) new-social-score)))
             }))))))
   (ok true))
+
+(define-public (delegate-reputation 
+  (delegate principal)
+  (score-amount uint)
+  (duration-blocks uint))
+  (let ((caller tx-sender)
+        (caller-reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
+    (asserts! (>= (get total-score caller-reputation) score-amount) err-insufficient-balance)
+    (asserts! (<= duration-blocks u144000) err-invalid-timeframe) ; Max 100 days
+    
+    (map-set reputation-delegates
+      {delegator: caller, delegate: delegate}
+      {
+        delegated-score: score-amount,
+        delegation-start: block-height,
+        delegation-end: (+ block-height duration-blocks),
+        active: true
+      })
+    
+    (map-set user-reputation caller
+      (merge caller-reputation {
+        total-score: (- (get total-score caller-reputation) score-amount),
+        last-updated: block-height
+      }))
+    (ok true)))
+
+(define-public (revoke-delegation (delegate principal))
+  (let ((caller tx-sender)
+        (delegation (unwrap! (map-get? reputation-delegates {delegator: caller, delegate: delegate}) err-not-found))
+        (caller-reputation (unwrap! (map-get? user-reputation caller) err-not-found)))
+    (asserts! (get active delegation) err-unauthorized)
+    
+    (map-set reputation-delegates
+      {delegator: caller, delegate: delegate}
+      (merge delegation {active: false}))
+    
+    (map-set user-reputation caller
+      (merge caller-reputation {
+        total-score: (+ (get total-score caller-reputation) (get delegated-score delegation)),
+        last-updated: block-height
+      }))
+    (ok true)))
+
+(define-public (award-badge
+  (user principal)
+  (badge-type (string-ascii 32))
+  (badge-level uint)
+  (requirements (list 5 (string-ascii 64))))
+  (let ((caller tx-sender))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (asserts! (<= badge-level u5) err-invalid-badge-level)
+    
+    (let ((badge-score (* badge-level u25)))
+      (map-set user-badges
+        {user: user, badge-type: badge-type}
+        {
+          badge-level: badge-level,
+          earned-at: block-height,
+          badge-score: badge-score,
+          requirements-met: requirements
+        })
+      
+      (try! (update-user-score user "social" badge-score))
+      (ok true))))
+
+(define-public (upgrade-badge
+  (user principal)
+  (badge-type (string-ascii 32))
+  (new-level uint))
+  (let ((caller tx-sender)
+        (existing-badge (unwrap! (map-get? user-badges {user: user, badge-type: badge-type}) err-not-found)))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (asserts! (> new-level (get badge-level existing-badge)) err-invalid-badge-level)
+    (asserts! (<= new-level u5) err-invalid-badge-level)
+    
+    (let ((level-diff (- new-level (get badge-level existing-badge)))
+          (score-increase (* level-diff u25)))
+      (map-set user-badges
+        {user: user, badge-type: badge-type}
+        (merge existing-badge {
+          badge-level: new-level,
+          badge-score: (* new-level u25)
+        }))
+      
+      (try! (update-user-score user "social" score-increase))
+      (ok true))))

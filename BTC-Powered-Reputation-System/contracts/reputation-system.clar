@@ -70,3 +70,54 @@
     badge-score: uint,
     requirements-met: (list 5 (string-ascii 64))
   })
+
+(define-public (initialize-reputation)
+  (let ((caller tx-sender))
+    (asserts! (is-none (map-get? user-reputation caller)) err-already-exists)
+    (ok (map-set user-reputation caller {
+      base-score: u100,
+      payment-score: u0,
+      governance-score: u0,
+      social-score: u0,
+      total-score: u100,
+      last-updated: block-height,
+      verified: false,
+      trust-level: u1,
+      reputation-locked: false
+    }))))
+
+(define-public (reset-reputation (user principal))
+  (let ((caller tx-sender))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (asserts! (is-some (map-get? user-reputation user)) err-not-found)
+    (ok (map-set user-reputation user {
+      base-score: u100,
+      payment-score: u0,
+      governance-score: u0,
+      social-score: u0,
+      total-score: u100,
+      last-updated: block-height,
+      verified: false,
+      trust-level: u1,
+      reputation-locked: false
+    }))))
+
+(define-public (lock-reputation (user principal) (duration-blocks uint))
+  (let ((caller tx-sender)
+        (reputation (unwrap! (map-get? user-reputation user) err-not-found)))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (ok (map-set user-reputation user
+      (merge reputation {
+        reputation-locked: true,
+        last-updated: (+ block-height duration-blocks)
+      })))))
+
+(define-public (unlock-reputation (user principal))
+  (let ((caller tx-sender)
+        (reputation (unwrap! (map-get? user-reputation user) err-not-found)))
+    (asserts! (is-eq caller contract-owner) err-owner-only)
+    (ok (map-set user-reputation user
+      (merge reputation {
+        reputation-locked: false,
+        last-updated: block-height
+      })))))
